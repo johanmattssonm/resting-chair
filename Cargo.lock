@@ -405,9 +405,9 @@ dependencies = [
 
 [[package]]
 name = "kaja-web"
-version = "1.0.3"
+version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc3203211c54861fc57d5059ad27498f2fcc420bdde37f20409a01fe4554f4e2"
+checksum = "2c140915814758529ff1d8fe9c6ca30e21b62573571f136f02469b569666ccf3"
 dependencies = [
  "gloo",
  "gloo-console",
