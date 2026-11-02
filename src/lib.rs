@@ -7,7 +7,10 @@ use wasm_bindgen_futures::spawn_local;
 
 mod tauri;
 
-use tauri::{AddProjectArgs, LoadRequestArgs, LoadRequestListArgs, SaveRequestArgs};
+use tauri::{
+    AddProjectArgs, CheckHeadersGitignoreArgs, LoadRequestArgs, LoadRequestListArgs,
+    SaveRequestArgs,
+};
 
 thread_local! {
     static HEADER_ROW_COUNT: Cell<usize> = const { Cell::new(1) };
@@ -164,6 +167,18 @@ impl AppComponent {
                     <div class="leave-dialog-actions">
                         <button type="button" onclick="addProject()">Add project</button>
                         <button class="button-secondary" type="button" onclick="hideProjectFolderDialog()">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="gitignore-warning-dialog" class="leave-dialog" role="dialog" aria-modal="true" aria-labelledby="gitignore-warning-title" hidden>
+                <div class="leave-dialog-panel">
+                    <p class="eyebrow">Git warning</p>
+                    <h2 id="gitignore-warning-title">headers.json is not ignored</h2>
+                    <p>This project does not ignore <code>headers.json</code>. It is highly recommended to have it in your <code>.gitignore</code> file if it contains http headers keys.</p>
+                    <div class="leave-dialog-actions">
+                        <button type="button" onclick="confirmAddProject()">Add project anyway</button>
+                        <button class="button-secondary" type="button" onclick="cancelGitignoreWarning()">Go back</button>
                     </div>
                 </div>
             </div>
@@ -747,6 +762,66 @@ fn browse_project_folder() {
     });
 }
 
+fn show_gitignore_warning(path: &str, start_new_request: bool) {
+    let Some(dialog) = get_element("#gitignore-warning-dialog") else {
+        return;
+    };
+
+    let _ = dialog.set_attribute("data-project-path", path);
+    let _ = dialog.set_attribute(
+        "data-start-new-request",
+        if start_new_request { "true" } else { "false" },
+    );
+    let _ = dialog.remove_attribute("hidden");
+}
+
+fn hide_gitignore_warning() {
+    if let Some(dialog) = get_element("#gitignore-warning-dialog") {
+        let _ = dialog.set_attribute("hidden", "");
+    }
+}
+
+fn invoke_add_project(path: String, start_new_request: bool) {
+    let project_args = AddProjectArgs { path: path.clone() };
+
+    spawn_local(async move {
+        let args = match tauri_wasm::args(&project_args) {
+            Ok(args) => args,
+            Err(error) => {
+                show_project_folder_dialog(start_new_request);
+                set_project_folder_path(&path);
+                set_project_folder_error(&format!("Could not prepare project folder: {error}"));
+                return;
+            }
+        };
+
+        match tauri_wasm::invoke("add_project").with_args(args).await {
+            Ok(value) => match serde_wasm_bindgen::from_value::<ProjectSummary>(value) {
+                Ok(project) => {
+                    select_project(&project);
+                    hide_project_folder_dialog();
+                    hide_gitignore_warning();
+                    if start_new_request {
+                        new_request();
+                    } else {
+                        load_projects();
+                    }
+                }
+                Err(error) => {
+                    show_project_folder_dialog(start_new_request);
+                    set_project_folder_path(&path);
+                    set_project_folder_error(&format!("Could not read project: {error}"));
+                }
+            },
+            Err(error) => {
+                show_project_folder_dialog(start_new_request);
+                set_project_folder_path(&path);
+                set_project_folder_error(&error.to_string());
+            }
+        }
+    });
+}
+
 #[callback(addProject)]
 fn add_project() {
     let path = try_get_value("#project-folder-input").trim().to_owned();
@@ -758,14 +833,12 @@ fn add_project() {
     let Some(dialog) = get_element("#project-folder-dialog") else {
         return;
     };
-
     let start_new_request =
         dialog.get_attribute("data-start-new-request").as_deref() == Some("true");
-
-    let project_args = AddProjectArgs { path };
+    let gitignore_args = CheckHeadersGitignoreArgs { path: path.clone() };
 
     spawn_local(async move {
-        let args = match tauri_wasm::args(&project_args) {
+        let args = match tauri_wasm::args(&gitignore_args) {
             Ok(args) => args,
             Err(error) => {
                 set_project_folder_error(&format!("Could not prepare project folder: {error}"));
@@ -773,22 +846,51 @@ fn add_project() {
             }
         };
 
-        match tauri_wasm::invoke("add_project").with_args(args).await {
-            Ok(value) => match serde_wasm_bindgen::from_value::<ProjectSummary>(value) {
-                Ok(project) => {
-                    select_project(&project);
+        match tauri_wasm::invoke("check_headers_gitignore")
+            .with_args(args)
+            .await
+        {
+            Ok(value) => match serde_wasm_bindgen::from_value::<bool>(value) {
+                Ok(true) => invoke_add_project(path, start_new_request),
+                Ok(false) => {
                     hide_project_folder_dialog();
-                    if start_new_request {
-                        new_request();
-                    } else {
-                        load_projects();
-                    }
+                    show_gitignore_warning(&path, start_new_request);
                 }
-                Err(error) => set_project_folder_error(&format!("Could not read project: {error}")),
+                Err(error) => {
+                    set_project_folder_error(&format!("Could not read .gitignore files: {error}"))
+                }
             },
-            Err(error) => set_project_folder_error(&format!("{error}")),
+            Err(error) => {
+                set_project_folder_error(&format!("Could not read .gitignore files: {error}"))
+            }
         }
     });
+}
+
+#[callback(confirmAddProject)]
+fn confirm_add_project() {
+    let Some(dialog) = get_element("#gitignore-warning-dialog") else {
+        return;
+    };
+    let Some(path) = dialog.get_attribute("data-project-path") else {
+        return;
+    };
+    let start_new_request =
+        dialog.get_attribute("data-start-new-request").as_deref() == Some("true");
+
+    invoke_add_project(path, start_new_request);
+}
+
+#[callback(cancelGitignoreWarning)]
+fn cancel_gitignore_warning() {
+    let Some(dialog) = get_element("#gitignore-warning-dialog") else {
+        return;
+    };
+    let start_new_request =
+        dialog.get_attribute("data-start-new-request").as_deref() == Some("true");
+
+    hide_gitignore_warning();
+    show_project_folder_dialog(start_new_request);
 }
 
 #[callback(newRequest)]

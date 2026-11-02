@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, fs, io, path::PathBuf};
 
+use ignore::gitignore::GitignoreBuilder;
 use reqwest::{
     Client, Method, Url,
     header::{HeaderMap, HeaderName, HeaderValue},
@@ -114,6 +115,50 @@ fn write_projects(app: &AppHandle, projects: &[Project]) -> Result<(), String> {
         .map_err(|error| format!("Could not write projects: {error}"))
 }
 
+fn headers_file_is_ignored(project_path: &str) -> Result<bool, String> {
+    let project_path = fs::canonicalize(project_path.trim())
+        .map_err(|error| format!("Could not access the project folder: {error}"))?;
+    if !project_path.is_dir() {
+        return Err("Choose an existing folder for the project.".to_owned());
+    }
+
+    let headers_path = project_path.join(HEADERS_FILE_NAME);
+    let mut directories = Vec::new();
+    let mut directory = Some(project_path.as_path());
+    while let Some(path) = directory {
+        directories.push(path);
+        directory = path.parent();
+    }
+    directories.reverse();
+
+    let mut ignored = false;
+    for directory in directories {
+        let gitignore_path = directory.join(".gitignore");
+        if !gitignore_path.is_file() {
+            continue;
+        }
+
+        let mut builder = GitignoreBuilder::new(directory);
+        if let Some(error) = builder.add(&gitignore_path) {
+            return Err(format!(
+                "Could not read {}: {error}",
+                gitignore_path.display()
+            ));
+        }
+        let gitignore = builder
+            .build()
+            .map_err(|error| format!("Could not parse {}: {error}", gitignore_path.display()))?;
+        let matched = gitignore.matched_path_or_any_parents(&headers_path, false);
+        if matched.is_ignore() {
+            ignored = true;
+        } else if matched.is_whitelist() {
+            ignored = false;
+        }
+    }
+
+    Ok(ignored)
+}
+
 fn project_summary(project: &Project) -> ProjectSummary {
     let path = PathBuf::from(&project.path);
     let name = path
@@ -201,6 +246,11 @@ async fn pick_project_folder(app: AppHandle) -> Option<String> {
         .set_title("Choose a project folder")
         .blocking_pick_folder()
         .map(|path| path.to_string())
+}
+
+#[tauri::command]
+fn check_headers_gitignore(path: String) -> Result<bool, String> {
+    headers_file_is_ignored(&path)
 }
 
 #[tauri::command]
@@ -410,6 +460,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_project_list,
             pick_project_folder,
+            check_headers_gitignore,
             add_project,
             load_request_list,
             load_request,
