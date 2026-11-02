@@ -64,7 +64,14 @@ struct PostResponse {
     status: u16,
     status_text: String,
     url: String,
+    headers: Vec<ResponseHeader>,
     body: String,
+}
+
+#[derive(Serialize)]
+struct ResponseHeader {
+    name: String,
+    value: String,
 }
 
 fn projects_file_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -409,6 +416,14 @@ async fn send_request(
         .canonical_reason()
         .unwrap_or("Unknown status")
         .to_owned();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| ResponseHeader {
+            name: name.as_str().to_owned(),
+            value: String::from_utf8_lossy(value.as_bytes()).into_owned(),
+        })
+        .collect();
     let body = response
         .text()
         .await
@@ -419,6 +434,7 @@ async fn send_request(
         status: status.as_u16(),
         status_text,
         url: response_url,
+        headers,
         body,
     })
 }

@@ -432,6 +432,28 @@ button:focus-visible {
   visibility: hidden;
 }
 
+.response-headers-toggle {
+  margin: 14px 14px 0;
+}
+
+.response-headers {
+  margin: 12px 14px 0;
+  padding: 12px;
+  color: #334155;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.response-headers[hidden] {
+  display: none;
+}
+
 #request-result {
   box-sizing: border-box;
   margin: 0;
@@ -542,6 +564,12 @@ button:focus-visible {
   #request-result {
     color: #cbd5e1;
     background: #111827;
+    border-color: #334155;
+  }
+
+  .response-headers {
+    color: #cbd5e1;
+    background: #1f2937;
     border-color: #334155;
   }
 

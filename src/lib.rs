@@ -54,7 +54,14 @@ struct PostResponse {
     status: u16,
     status_text: String,
     url: String,
+    headers: Vec<ResponseHeader>,
     body: String,
+}
+
+#[derive(Deserialize)]
+struct ResponseHeader {
+    name: String,
+    value: String,
 }
 
 #[component("app-root")]
@@ -303,6 +310,8 @@ impl RestCallSetupComponent {
                 <p id="request-status" class="request-status" role="status" aria-live="polite"></p>
                 <p id="request-url" class="request-url"></p>
                 <section id="request-response" class="request-response" aria-label="Response" hidden>
+                    <button id="response-headers-toggle" class="button-secondary response-headers-toggle" type="button" onclick="toggleResponseHeaders()" aria-controls="response-headers" aria-expanded="false">Show response headers</button>
+                    <div id="response-headers" class="response-headers" hidden></div>
                     <pre id="request-result"></pre>
                 </section>
             </main>
@@ -1136,7 +1145,49 @@ fn clear_request_result() {
         let _ = response.set_attribute("class", "request-response request-response-empty");
         let _ = response.set_attribute("aria-hidden", "true");
     }
+    reset_response_headers();
     try_inner_text("#request-result", "");
+}
+
+fn format_response_headers(headers: &[ResponseHeader]) -> String {
+    headers
+        .iter()
+        .map(|header| format!("{}: {}", header.name, header.value))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn reset_response_headers() {
+    if let Some(headers) = get_element("#response-headers") {
+        let _ = headers.set_attribute("hidden", "");
+        headers.set_text_content(None);
+    }
+    if let Some(toggle) = get_element("#response-headers-toggle") {
+        let _ = toggle.set_attribute("aria-expanded", "false");
+        toggle.set_text_content(Some("Show response headers"));
+    }
+}
+
+#[callback(toggleResponseHeaders)]
+fn toggle_response_headers() {
+    let Some(headers) = get_element("#response-headers") else {
+        return;
+    };
+    let expanded = headers.has_attribute("hidden");
+    if expanded {
+        let _ = headers.remove_attribute("hidden");
+    } else {
+        let _ = headers.set_attribute("hidden", "");
+    }
+
+    if let Some(toggle) = get_element("#response-headers-toggle") {
+        let _ = toggle.set_attribute("aria-expanded", if expanded { "true" } else { "false" });
+        toggle.set_text_content(Some(if expanded {
+            "Hide response headers"
+        } else {
+            "Show response headers"
+        }));
+    }
 }
 
 fn format_response_body(body: &str) -> String {
@@ -1151,17 +1202,17 @@ fn render_request_response(response: PostResponse) {
         &format!("{} {}", response.method, response.url),
     );
 
-    if response.body.trim().is_empty() {
-        clear_request_result();
-        return;
-    }
-
     if let Some(response_container) = get_element("#request-response") {
         let _ = response_container.remove_attribute("hidden");
         let _ = response_container.set_attribute("class", "request-response");
         let _ = response_container.remove_attribute("aria-hidden");
     }
 
+    reset_response_headers();
+    try_inner_text(
+        "#response-headers",
+        &format_response_headers(&response.headers),
+    );
     try_inner_text("#request-result", &format_response_body(&response.body));
     if let Some(result) = get_element("#request-result") {
         let _ = result.remove_attribute("style");
