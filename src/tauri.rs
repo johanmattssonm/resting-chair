@@ -4,33 +4,33 @@ use super::StoredRequest;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct AddProjectArgs {
-    pub(crate) path: String,
+pub struct AddProjectArgs {
+    pub path: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct CheckHeadersGitignoreArgs {
-    pub(crate) path: String,
+pub struct CheckHeadersGitignoreArgs {
+    pub path: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct LoadRequestListArgs {
-    pub(crate) project_path: String,
+pub struct LoadRequestListArgs {
+    pub project_path: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct LoadRequestArgs {
-    pub(crate) project_path: String,
-    pub(crate) id: String,
+pub struct LoadRequestArgs {
+    pub project_path: String,
+    pub id: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct SaveRequestArgs {
-    pub(crate) project_path: String,
+pub struct SaveRequestArgs {
+    pub project_path: String,
     #[serde(flatten)]
-    pub(crate) request: StoredRequest,
+    pub request: StoredRequest,
 }
