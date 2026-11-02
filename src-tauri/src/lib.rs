@@ -1,19 +1,126 @@
+use std::{fs, io, path::PathBuf};
+
 use reqwest::{
     Client, Method, Url,
     header::{HeaderMap, HeaderName, HeaderValue},
 };
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager};
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct RequestHeader {
     key: String,
     value: String,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredRequest {
+    id: String,
+    name: String,
+    method: String,
+    domain: String,
+    endpoint: String,
+    body: String,
+    headers: Vec<RequestHeader>,
+}
+
+const REQUESTS_FILE_NAME: &str = "requests.json";
+
 #[derive(Serialize)]
 struct PostResponse {
     status: u16,
     body: String,
+}
+
+fn requests_file_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not find the application data directory: {error}"))?;
+
+    fs::create_dir_all(&app_data_dir)
+        .map_err(|error| format!("Could not create the application data directory: {error}"))?;
+
+    Ok(app_data_dir.join(REQUESTS_FILE_NAME))
+}
+
+fn read_requests(app: &AppHandle) -> Result<Vec<StoredRequest>, String> {
+    let path = requests_file_path(app)?;
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("Could not read saved requests: {error}")),
+    };
+
+    serde_json::from_str(&contents)
+        .map_err(|error| format!("Saved requests file is invalid JSON: {error}"))
+}
+
+fn write_requests(app: &AppHandle, requests: &[StoredRequest]) -> Result<(), String> {
+    let contents = serde_json::to_string_pretty(requests)
+        .map_err(|error| format!("Could not serialize saved requests: {error}"))?;
+    fs::write(requests_file_path(app)?, contents)
+        .map_err(|error| format!("Could not write saved requests: {error}"))
+}
+
+#[tauri::command]
+fn load_requests(app: AppHandle) -> Result<Vec<StoredRequest>, String> {
+    read_requests(&app)
+}
+
+#[tauri::command]
+fn load_request(app: AppHandle, id: String) -> Result<StoredRequest, String> {
+    read_requests(&app)?
+        .into_iter()
+        .find(|request| request.id == id)
+        .ok_or_else(|| "The selected request no longer exists.".to_owned())
+}
+
+#[tauri::command]
+fn save_request(
+    app: AppHandle,
+    id: String,
+    name: String,
+    method: String,
+    domain: String,
+    endpoint: String,
+    body: String,
+    headers: Vec<RequestHeader>,
+) -> Result<StoredRequest, String> {
+    let mut request = StoredRequest {
+        id,
+        name: name.trim().to_owned(),
+        method,
+        domain: domain.trim().to_owned(),
+        endpoint: endpoint.trim().to_owned(),
+        body,
+        headers,
+    };
+
+    if request.name.is_empty() {
+        return Err("A request name is required.".to_owned());
+    }
+
+    if request.id.is_empty() {
+        request.id = format!(
+            "request-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| format!("Could not generate a request ID: {error}"))?
+                .as_millis()
+        );
+    }
+
+    let mut requests = read_requests(&app)?;
+    if let Some(position) = requests.iter().position(|saved| saved.id == request.id) {
+        requests[position] = request.clone();
+    } else {
+        requests.push(request.clone());
+    }
+
+    write_requests(&app, &requests)?;
+    Ok(request)
 }
 
 #[tauri::command]
@@ -78,7 +185,12 @@ fn parse_headers(headers: Vec<RequestHeader>) -> Result<HeaderMap, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![send_request])
+        .invoke_handler(tauri::generate_handler![
+            load_requests,
+            load_request,
+            save_request,
+            send_request
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
