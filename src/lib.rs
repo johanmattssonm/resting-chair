@@ -13,6 +13,7 @@ thread_local! {
 struct RequestHeader {
     key: String,
     value: String,
+    enabled: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -24,7 +25,28 @@ struct StoredRequest {
     domain: String,
     endpoint: String,
     body: String,
+    #[serde(default)]
     headers: Vec<RequestHeader>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RequestSummary {
+    id: String,
+    name: String,
+    method: String,
+    domain: String,
+    endpoint: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PostResponse {
+    method: String,
+    status: u16,
+    status_text: String,
+    url: String,
+    body: String,
 }
 
 #[derive(Serialize)]
@@ -90,7 +112,7 @@ impl AppComponent {
             self.render_request_detail();
         } else {
             self.render_request_picker();
-            load_requests_callback();
+            load_requests();
         }
     }
 
@@ -164,7 +186,8 @@ impl RestCallSetupComponent {
             let value = header
                 .map(|header| header.value.as_str())
                 .unwrap_or_default();
-            header_rows.push_str(&header_row(index, key, value));
+            let enabled = header.map(|header| header.enabled).unwrap_or(true);
+            header_rows.push_str(&header_row(index, key, value, enabled));
         }
 
         let request_id = self.attribute("request_id");
@@ -185,7 +208,7 @@ impl RestCallSetupComponent {
             <main class="container">
                 <header class="page-header page-header--split">
                     <div>
-                        <h1>$request_name_headline</h1>
+                        <h1 id="request-title">$request_name_headline</h1>
                     </div>
                     <button class="button-secondary" type="button" onclick="showRequestPicker()">All requests</button>
                 </header>
@@ -194,23 +217,23 @@ impl RestCallSetupComponent {
                     <input id="request-id-input" type="hidden" value="$request_id" />
                     <div class="field">
                         <label for="request-name-input">Name</label>
-                        <input id="request-name-input" type="text" value="$request_name" placeholder="List users" oninput="markRequestDirty()" />
+                        <input id="request-name-input" type="text" value="$request_name" oninput="updateRequest()" />
                     </div>
                     <div class="field">
                         <label for="method-input">Method</label>
-                        <select id="method-input" onchange="markRequestDirty()"></select>
+                        <select id="method-input" onchange="updateRequest()"></select>
                     </div>
                     <div class="field">
                         <label for="domain-input">Domain</label>
-                        <input id="domain-input" type="url" value="$domain" placeholder="https://api.example.com" oninput="markRequestDirty()" />
+                        <input id="domain-input" type="url" value="$domain" placeholder="https://api.example.com" oninput="updateRequest()" />
                     </div>
                     <div class="field">
                         <label for="endpoint-input">Endpoint</label>
-                        <input id="endpoint-input" type="text" value="$endpoint" placeholder="/v1/resources" oninput="markRequestDirty()" />
+                        <input id="endpoint-input" type="text" value="$endpoint" placeholder="/v1/resources" oninput="updateRequest()" />
                     </div>
-                    <div class="field">
+                    <div id="body-field" class="field">
                         <label for="body-input">Request body</label>
-                        <textarea id="body-input" spellcheck="false" placeholder="{&quot;name&quot;:&quot;Example&quot;}" oninput="markRequestDirty()" onkeydown="handleBodyTab(event)">$body</textarea>
+                        <textarea id="body-input" spellcheck="false" placeholder="{&quot;name&quot;:&quot;Example&quot;}" oninput="updateRequest()" onkeydown="handleBodyTab(event)">$body</textarea>
                     </div>
                     <div class="field">
                         <span class="field-label">Headers</span>
@@ -222,8 +245,11 @@ impl RestCallSetupComponent {
                         <button class="button-secondary" type="button" onclick="postRequest()">Send request</button>
                     </div>
                 </section>
-                <p id="request-status" role="status" aria-live="polite"></p>
-                <pre id="request-result"></pre>
+                <p id="request-status" class="request-status" role="status" aria-live="polite"></p>
+                <p id="request-url" class="request-url"></p>
+                <section id="request-response" class="request-response" aria-label="Response" hidden>
+                    <pre id="request-result"></pre>
+                </section>
             </main>
 
             <div id="unsaved-changes-dialog" class="leave-dialog" role="dialog" aria-modal="true" aria-labelledby="unsaved-changes-title" hidden>
@@ -248,6 +274,8 @@ impl RestCallSetupComponent {
             header_list.set_inner_html(&header_rows);
         }
         update_header_list_visibility();
+        update_request_url();
+        update_request_body_visibility();
     }
 
     fn headers(&self) -> Vec<RequestHeader> {
@@ -275,7 +303,9 @@ fn request_name_or_default(name: &str) -> &str {
 
 fn method_options(selected_method: &str) -> String {
     let mut options = String::new();
-    for method in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+    for method in [
+        "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY",
+    ] {
         let selected = if method == selected_method {
             "selected"
         } else {
@@ -301,17 +331,19 @@ fn update_header_list_visibility() {
     }
 }
 
-fn header_row(index: usize, key: &str, value: &str) -> String {
+fn header_row(index: usize, key: &str, value: &str, enabled: bool) -> String {
+    let checked = if enabled { "checked" } else { "" };
     let row = html! {{
         <div id="header-row-$index" class="header-row">
+            <input id="header-enabled-input-$index" class="header-enabled" type="checkbox" aria-label="Enable header" $checked onchange="updateRequest()" />
             <div class="header-fields">
                 <div>
                     <label for="header-key-input-$index">Key</label>
-                    <input id="header-key-input-$index" type="text" value="$key" oninput="markRequestDirty()" />
+                    <input id="header-key-input-$index" type="text" value="$key" oninput="updateRequest()" />
                 </div>
                 <div>
                     <label for="header-value-input-$index">Value</label>
-                    <input id="header-value-input-$index" type="text" value="$value" oninput="markRequestDirty()" />
+                    <input id="header-value-input-$index" type="text" value="$value" oninput="updateRequest()" />
                 </div>
             </div>
             <button class="button-danger" type="button" onclick="removeHeader($index)">Remove</button>
@@ -332,6 +364,76 @@ fn request_is_dirty() -> bool {
         .and_then(|request_app| request_app.get_attribute("dirty"))
         .as_deref()
         == Some("true")
+}
+
+fn set_request_status(message: &str) {
+    if let Some(status) = get_element("#request-status") {
+        let _ = status.set_attribute("class", "request-status");
+    }
+    try_inner_text("#request-status", message);
+}
+
+fn set_request_error(message: &str) {
+    if let Some(status) = get_element("#request-status") {
+        let _ = status.set_attribute("class", "request-status request-status-failed");
+    }
+    try_inner_text("#request-status", message);
+}
+
+fn set_request_status_with_code(status_code: u16, message: &str) {
+    if let Some(status) = get_element("#request-status") {
+        let class = if status_code == 200 {
+            "request-status request-status-success"
+        } else {
+            "request-status request-status-failed"
+        };
+        let _ = status.set_attribute("class", class);
+    }
+    try_inner_text("#request-status", &format!("{status_code} {message}"));
+}
+
+fn display_request_url(method: &str, domain: &str, endpoint: &str) {
+    let domain = domain.trim();
+    if domain.is_empty() {
+        try_inner_text("#request-url", "");
+        return;
+    }
+
+    try_inner_text(
+        "#request-url",
+        &format!("{method} {domain}{}", endpoint.trim()),
+    );
+}
+
+fn update_request_url() {
+    display_request_url(
+        &try_get_select_value("#method-input"),
+        &try_get_value("#domain-input"),
+        &try_get_value("#endpoint-input"),
+    );
+}
+
+fn update_request_title() {
+    let name = try_get_value("#request-name-input");
+    let title = if name.trim().is_empty() {
+        "None"
+    } else {
+        name.trim()
+    };
+    try_inner_text("#request-title", title);
+}
+
+fn update_request_body_visibility() {
+    let Some(body_field) = get_element("#body-field") else {
+        return;
+    };
+    let method = try_get_select_value("#method-input");
+
+    if matches!(method.as_str(), "GET" | "HEAD") {
+        let _ = body_field.set_attribute("hidden", "");
+    } else {
+        let _ = body_field.remove_attribute("hidden");
+    }
 }
 
 fn show_request_picker() {
@@ -359,7 +461,7 @@ fn set_request_attributes(request: &StoredRequest) {
     let headers = match serde_json::to_string(&request.headers) {
         Ok(headers) => headers,
         Err(_) => {
-            try_inner_text("#request-status", "Could not prepare request headers.");
+            set_request_error("Could not prepare request headers.");
             return;
         }
     };
@@ -374,10 +476,10 @@ fn set_request_attributes(request: &StoredRequest) {
 }
 
 #[callback(loadRequests)]
-fn load_requests_callback() {
+fn load_requests() {
     spawn_local(async {
-        match tauri_wasm::invoke("load_requests").await {
-            Ok(value) => match serde_wasm_bindgen::from_value::<Vec<StoredRequest>>(value) {
+        match tauri_wasm::invoke("load_request_list").await {
+            Ok(value) => match serde_wasm_bindgen::from_value::<Vec<RequestSummary>>(value) {
                 Ok(requests) => render_request_list(&requests),
                 Err(error) => try_inner_text(
                     "#request-list",
@@ -386,13 +488,13 @@ fn load_requests_callback() {
             },
             Err(error) => try_inner_text(
                 "#request-list",
-                &format!("Could not load saved requests: {error:?}"),
+                &format!("Could not load saved requests: {error}"),
             ),
         }
     });
 }
 
-fn render_request_list(requests: &[StoredRequest]) {
+fn render_request_list(requests: &[RequestSummary]) {
     let Some(app) = get_element("app-root") else {
         return;
     };
@@ -402,25 +504,17 @@ fn render_request_list(requests: &[StoredRequest]) {
     }
 
     if requests.is_empty() {
-        try_inner_text(
-            "#request-list",
-            "No saved requests yet. Create one to get started.",
-        );
+        try_inner_text("#request-list", "No requests yet.");
         return;
     }
 
     let mut cards = String::new();
 
     for request in requests {
-        let request_id = &request.id;
-        let request_name = request_name_or_default(&request.name);
-        let request_method = &request.method;
-        let request_domain = &request.domain;
-        let request_endpoint = &request.endpoint;
         let card = html! {{
-            <button class="request-card" type="button" data-request-id="$request_id" onclick="openRequest(this.dataset.requestId)">
-                <span class="request-card-name">$request_name</span>
-                <span class="request-card-details"><strong>$request_method</strong> $request_domain$request_endpoint</span>
+            <button class="request-card" type="button" data-request-id="$(request.id)" onclick="openRequest(this.dataset.requestId)">
+                <span class="request-card-name">$(request_name_or_default(&request.name))</span>
+                <span class="request-card-details"><strong>$(request.method)</strong> $(request.domain)$(request.endpoint)</span>
             </button>
         }};
         cards.push_str(card.as_str());
@@ -432,7 +526,7 @@ fn render_request_list(requests: &[StoredRequest]) {
 }
 
 #[callback(newRequest)]
-fn new_request_callback() {
+fn new_request() {
     set_request_attributes(&StoredRequest {
         id: String::new(),
         name: String::new(),
@@ -447,36 +541,48 @@ fn new_request_callback() {
     }
 }
 
-#[callback(markRequestDirty)]
-fn mark_request_dirty_callback() {
+#[callback(updateRequest)]
+fn update_request() {
     set_request_dirty(true);
+    update_request_url();
+    update_request_title();
+    update_request_body_visibility();
 }
 
 #[callback(handleBodyTab)]
-fn handle_body_tab_callback(event: web_sys::KeyboardEvent) {
+fn handle_body_tab(event: web_sys::KeyboardEvent) {
     if event.key() != "Tab" {
         return;
     }
 
     event.prevent_default();
 
-    let Some(textarea) = get_element("#body-input")
-        .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
-    else {
+    let element = get_element("#body-input");
+
+    if element.is_none() {
         return;
-    };
+    }
+
+    let textarea = element.unwrap().dyn_into::<web_sys::HtmlTextAreaElement>();
+
+    if textarea.is_err() {
+        return;
+    }
+
+    let textarea = textarea.unwrap();
 
     let start = textarea
         .selection_start()
         .ok()
         .flatten()
         .unwrap_or_default();
+
     let end = textarea.selection_end().ok().flatten().unwrap_or(start);
     let _ = textarea.set_range_text_with_start_and_end_and_mode("    ", start, end, "end");
 }
 
 #[callback(showRequestPicker)]
-fn show_request_picker_callback() {
+fn show_request_picker_action() {
     if !request_is_dirty() {
         show_request_picker();
         return;
@@ -486,26 +592,23 @@ fn show_request_picker_callback() {
 }
 
 #[callback(saveAndShowRequestPicker)]
-fn save_and_show_request_picker_callback() {
+fn save_and_show_request_picker() {
     save_request(true);
 }
 
 #[callback(discardAndShowRequestPicker)]
-fn discard_and_show_request_picker_callback() {
+fn discard_and_show_request_picker() {
     show_request_picker();
 }
 
 #[callback(openRequest)]
-fn open_request_callback(id: String) {
+fn open_request(id: String) {
     spawn_local(async move {
         let request_args = LoadRequestArgs { id };
         let args = match tauri_wasm::args(&request_args) {
             Ok(args) => args,
             Err(error) => {
-                try_inner_text(
-                    "#request-list",
-                    &format!("Could not open request: {error:?}"),
-                );
+                try_inner_text("#request-list", &format!("Could not open request: {error}"));
                 return;
             }
         };
@@ -523,16 +626,15 @@ fn open_request_callback(id: String) {
                     &format!("Could not read request details: {error}"),
                 ),
             },
-            Err(error) => try_inner_text(
-                "#request-list",
-                &format!("Could not open request: {error:?}"),
-            ),
+            Err(error) => {
+                try_inner_text("#request-list", &format!("Could not open request: {error}"))
+            }
         }
     });
 }
 
 #[callback(addHeader)]
-fn add_header_callback() {
+fn add_header() {
     let added = HEADER_ROW_COUNT.with(|count| {
         let index = count.get();
         let Some(header_list) = get_element("#header-list") else {
@@ -540,7 +642,7 @@ fn add_header_callback() {
         };
 
         if header_list
-            .insert_adjacent_html("beforeend", &header_row(index, "", ""))
+            .insert_adjacent_html("beforeend", &header_row(index, "", "", true))
             .is_ok()
         {
             count.set(index + 1);
@@ -553,12 +655,12 @@ fn add_header_callback() {
     });
 
     if !added {
-        try_inner_text("#request-status", "Could not add a header field.");
+        set_request_error("Could not add a header field.");
     }
 }
 
 #[callback(removeHeader)]
-fn remove_header_callback(index: usize) {
+fn remove_header(index: usize) {
     let selector = format!("#header-row-{index}");
     if let Some(row) = get_element(&selector) {
         row.remove();
@@ -581,6 +683,13 @@ fn try_get_select_value(selector: &str) -> String {
         .unwrap_or_default()
 }
 
+fn try_get_checkbox_checked(selector: &str) -> bool {
+    get_element(selector)
+        .and_then(|element| element.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|input| input.checked())
+        .unwrap_or(true)
+}
+
 fn collect_headers() -> std::result::Result<Vec<RequestHeader>, String> {
     HEADER_ROW_COUNT.with(|count| {
         let mut headers = Vec::new();
@@ -591,14 +700,19 @@ fn collect_headers() -> std::result::Result<Vec<RequestHeader>, String> {
             let value = try_get_value(&format!("#header-value-input-{index}"))
                 .trim()
                 .to_owned();
+            let enabled = try_get_checkbox_checked(&format!("#header-enabled-input-{index}"));
 
             if key.is_empty() && value.is_empty() {
                 continue;
             }
-            if key.is_empty() || value.is_empty() {
+            if enabled && (key.is_empty() || value.is_empty()) {
                 return Err(format!("Header {} needs both a key and value.", index + 1));
             }
-            headers.push(RequestHeader { key, value });
+            headers.push(RequestHeader {
+                key,
+                value,
+                enabled,
+            });
         }
         Ok(headers)
     })
@@ -616,35 +730,88 @@ fn request_from_form() -> std::result::Result<StoredRequest, String> {
     })
 }
 
+fn clear_request_result() {
+    if let Some(result) = get_element("#request-result") {
+        let height = result.client_height();
+        if height > 0 {
+            let _ = result.set_attribute("style", &format!("min-height: {height}px"));
+        }
+    }
+    if let Some(response) = get_element("#request-response") {
+        let _ = response.set_attribute("class", "request-response request-response-empty");
+        let _ = response.set_attribute("aria-hidden", "true");
+    }
+    try_inner_text("#request-result", "");
+}
+
+fn format_response_body(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .and_then(|value| serde_json::to_string_pretty(&value))
+        .unwrap_or_else(|_| body.to_owned())
+}
+
+fn render_request_response(response: PostResponse) {
+    try_inner_text(
+        "#request-url",
+        &format!("{} {}", response.method, response.url),
+    );
+
+    if response.body.trim().is_empty() {
+        clear_request_result();
+        return;
+    }
+
+    if let Some(response_container) = get_element("#request-response") {
+        let _ = response_container.remove_attribute("hidden");
+        let _ = response_container.set_attribute("class", "request-response");
+        let _ = response_container.remove_attribute("aria-hidden");
+    }
+
+    try_inner_text("#request-result", &format_response_body(&response.body));
+    if let Some(result) = get_element("#request-result") {
+        let _ = result.remove_attribute("style");
+    }
+}
+
 #[callback(saveRequest)]
-fn save_request_callback() {
+fn save_request_action() {
+    save_request(false);
+}
+
+#[callback(saveRequestShortcut)]
+fn save_request_shortcut(event: web_sys::KeyboardEvent) {
+    if !(event.ctrl_key() || event.meta_key())
+        || !event.key().eq_ignore_ascii_case("s")
+        || get_element("#request-name-input").is_none()
+    {
+        return;
+    }
+
+    event.prevent_default();
     save_request(false);
 }
 
 fn save_request(return_to_picker: bool) {
+    if try_get_value("#request-name-input").trim().is_empty() {
+        set_request_error("Enter a request name before saving.");
+        return;
+    }
+
     let request = match request_from_form() {
         Ok(request) => request,
         Err(message) => {
-            try_inner_text("#request-status", &message);
+            set_request_error(&message);
             return;
         }
     };
 
-    if request.name.is_empty() {
-        try_inner_text("#request-status", "Enter a request name before saving.");
-        return;
-    }
-
-    try_inner_text("#request-status", "Saving request");
+    set_request_status("Saving request");
 
     spawn_local(async move {
         let args = match tauri_wasm::args(&request) {
             Ok(args) => args,
             Err(error) => {
-                try_inner_text(
-                    "#request-status",
-                    &format!("Could not prepare request: {error:?}"),
-                );
+                set_request_error(&format!("Could not prepare request: {error}"));
                 return;
             }
         };
@@ -657,67 +824,54 @@ fn save_request(return_to_picker: bool) {
                         let _ = id.set_attribute("value", &saved_request.id);
                     }
                     set_request_dirty(false);
-                    try_inner_text("#request-status", "Request saved.");
+                    clear_request_result();
+                    set_request_status("Request saved.");
                     if return_to_picker {
                         show_request_picker();
                     }
                 }
-                Err(error) => try_inner_text(
-                    "#request-status",
-                    &format!("Could not read saved request: {error}"),
-                ),
+                Err(error) => set_request_error(&format!("Could not read saved request: {error}")),
             },
-            Err(error) => try_inner_text(
-                "#request-status",
-                &format!("Could not save request: {error:?}"),
-            ),
+            Err(error) => set_request_error(&format!("Could not save request: {error}")),
         }
     });
 }
 
 #[callback(postRequest)]
-fn post_request_callback() {
+fn post_request() {
     let payload = match request_from_form() {
         Ok(request) => request,
         Err(message) => {
-            try_inner_text("#request-status", &message);
+            set_request_error(&message);
             return;
         }
     };
+    display_request_url(&payload.method, &payload.domain, &payload.endpoint);
+
     if payload.domain.is_empty() {
-        try_inner_text("#request-status", "Enter a domain to send the request.");
+        set_request_error("Enter a domain to send the request.");
         return;
     }
 
-    try_inner_text(
-        &"#request-status",
-        &format!("Sending {} request…", payload.method),
-    );
-    try_inner_text("#request-result", "");
+    set_request_status(&format!("Sending {} request…", payload.method));
     spawn_local(async move {
         let args = match tauri_wasm::args(&payload) {
             Ok(args) => args,
             Err(error) => {
-                try_inner_text(
-                    "#request-status",
-                    &format!("Could not prepare request: {error:?}"),
-                );
+                set_request_error(&format!("Could not prepare request: {error}"));
                 return;
             }
         };
 
         match tauri_wasm::invoke("send_request").with_args(args).await {
-            Ok(value) => match js_sys::JSON::stringify(&value) {
+            Ok(value) => match serde_wasm_bindgen::from_value::<PostResponse>(value) {
                 Ok(response) => {
-                    try_inner_text("#request-status", "Request completed.");
-                    try_inner_text("#request-result", &response.as_string().unwrap_or_default());
+                    set_request_status_with_code(response.status, &response.status_text);
+                    render_request_response(response);
                 }
-                Err(error) => try_inner_text(
-                    "#request-status",
-                    &format!("Could not read response: {error:?}"),
-                ),
+                Err(error) => set_request_error(&format!("Could not read response: {error}")),
             },
-            Err(error) => try_inner_text("#request-status", &format!("Request failed: {error:?}")),
+            Err(error) => set_request_error(&error.to_string()),
         }
     });
 }
@@ -725,4 +879,12 @@ fn post_request_callback() {
 #[wasm_bindgen(start)]
 pub fn init() {
     init_callbacks();
+
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(callback) = get_callback("saveRequestShortcut") else {
+        return;
+    };
+    let _ = window.add_event_listener_with_callback("keydown", &callback);
 }
