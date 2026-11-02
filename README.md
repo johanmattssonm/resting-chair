@@ -1,3 +1,3 @@
 # Resting Chair
 
-A tool for maniging and testing REST calls over HTTP.
+A tool for managing and testing REST calls over HTTP.
