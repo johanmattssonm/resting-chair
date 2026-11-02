@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::{JsCast, prelude::wasm_bindgen};
 use wasm_bindgen_futures::spawn_local;
 
+mod tauri;
+
+use tauri::{AddProjectArgs, LoadRequestArgs, LoadRequestListArgs, SaveRequestArgs};
+
 thread_local! {
     static HEADER_ROW_COUNT: Cell<usize> = const { Cell::new(1) };
 }
@@ -39,6 +43,13 @@ struct RequestSummary {
     endpoint: String,
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectSummary {
+    path: String,
+    name: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PostResponse {
@@ -47,11 +58,6 @@ struct PostResponse {
     status_text: String,
     url: String,
     body: String,
-}
-
-#[derive(Serialize)]
-struct LoadRequestArgs {
-    id: String,
 }
 
 #[component("app-root")]
@@ -72,6 +78,10 @@ struct App {
     request_body: String,
     #[attribute]
     request_headers: String,
+    #[attribute]
+    project_path: String,
+    #[attribute]
+    project_name: String,
 }
 
 #[component("rest-call-setup")]
@@ -108,30 +118,79 @@ impl Component for AppComponent {
 
 impl AppComponent {
     fn render(&self) {
-        if self.attribute("view") == "detail" {
-            self.render_request_detail();
-        } else {
-            self.render_request_picker();
-            load_requests();
+        match self.attribute("view").as_str() {
+            "detail" => self.render_request_detail(),
+            "picker" => {
+                self.render_request_picker();
+                load_requests();
+            }
+            _ => {
+                self.render_project_picker();
+                load_projects();
+            }
         }
     }
 
-    fn render_request_picker(&self) {
-        let content = r#"
+    fn render_project_picker(&self) {
+        let content = html! {{
             <main class="container">
-                <header class="page-header page-header--split">
+                <header class="page-header page-header-split">
                     <div>
-                        <h1>REST Call</h1>
-                        <p>Choose a saved request or create a new one.</p>
+                        <h1>Projects</h1>
+                        <p>Choose a folder that contains your saved requests.</p>
                     </div>
-                    <button type="button" onclick="newRequest()">New request</button>
+                    <div class="header-actions">
+                        <button type="button" onclick="showProjectFolderDialog()">Add project</button>
+                    </div>
                 </header>
-                <section class="request-picker" aria-label="Saved requests">
-                    <div id="request-list" class="request-list" role="status" aria-live="polite">Loading saved requests…</div>
+                <section class="request-picker" aria-label="Projects">
+                    <div id="project-list" class="request-list" role="status" aria-live="polite">Loading projects...</div>
                 </section>
             </main>
-        "#;
-        self.set_content(content);
+
+            <div id="project-folder-dialog" class="leave-dialog" role="dialog" aria-modal="true" aria-labelledby="project-folder-title" hidden>
+                <div class="leave-dialog-panel">
+                    <p class="eyebrow">Project folder</p>
+                    <h2 id="project-folder-title">Choose a project folder</h2>
+                    <p>Requests and headers will be saved in this folder.</p>
+                    <div class="field project-folder-field">
+                        <label for="project-folder-input">Folder path</label>
+                        <div class="project-folder-input">
+                            <input id="project-folder-input" type="text" placeholder="/path/to/project" />
+                            <button class="button-secondary" type="button" onclick="browseProjectFolder()">Choose folder</button>
+                        </div>
+                    </div>
+                    <p id="project-folder-error" class="request-status request-status-failed" role="alert" hidden></p>
+                    <div class="leave-dialog-actions">
+                        <button type="button" onclick="addProject()">Add project</button>
+                        <button class="button-secondary" type="button" onclick="hideProjectFolderDialog()">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        }};
+        self.set_content(content.as_str());
+    }
+
+    fn render_request_picker(&self) {
+        let project_name = self.attribute("project_name");
+        let content = html! {{
+            <main class="container">
+                <header class="page-header page-header-split">
+                    <div>
+                        <h1>$project_name</h1>
+                        <p>Choose a saved request or create a new one.</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="button-secondary" type="button" onclick="showProjectPicker()">Back to projects</button>
+                        <button type="button" onclick="newRequest()">New request</button>
+                    </div>
+                </header>
+                <section class="request-picker" aria-label="Saved requests">
+                    <div id="request-list" class="request-list" role="status" aria-live="polite">Loading saved requests...</div>
+                </section>
+            </main>
+        }};
+        self.set_content(content.as_str());
     }
 
     fn render_request_detail(&self) {
@@ -206,11 +265,11 @@ impl RestCallSetupComponent {
 
         let content = html! {{
             <main class="container">
-                <header class="page-header page-header--split">
+                <header class="page-header page-header-split">
                     <div>
                         <h1 id="request-title">$request_name_headline</h1>
                     </div>
-                    <button class="button-secondary" type="button" onclick="showRequestPicker()">All requests</button>
+                    <button class="button-secondary" type="button" onclick="showRequestPicker()">Back to requests</button>
                 </header>
 
                 <section class="request-form" aria-label="Request details">
@@ -436,9 +495,21 @@ fn update_request_body_visibility() {
     }
 }
 
+fn selected_project_path() -> String {
+    get_element("app-root")
+        .and_then(|app| app.get_attribute("project_path"))
+        .unwrap_or_default()
+}
+
 fn show_request_picker() {
     if let Some(app) = get_element("app-root") {
         let _ = app.set_attribute("view", "picker");
+    }
+}
+
+fn show_project_picker() {
+    if let Some(app) = get_element("app-root") {
+        let _ = app.set_attribute("view", "projects");
     }
 }
 
@@ -475,10 +546,84 @@ fn set_request_attributes(request: &StoredRequest) {
     let _ = app.set_attribute("request_headers", &headers);
 }
 
+#[callback(loadProjects)]
+fn load_projects() {
+    spawn_local(async {
+        match tauri_wasm::invoke("load_project_list").await {
+            Ok(value) => match serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(value) {
+                Ok(projects) => render_project_list(&projects),
+                Err(error) => try_inner_text(
+                    "#project-list",
+                    &format!("Could not read projects: {error}"),
+                ),
+            },
+            Err(error) => try_inner_text(
+                "#project-list",
+                &format!("Could not load projects: {error}"),
+            ),
+        }
+    });
+}
+
+fn render_project_list(projects: &[ProjectSummary]) {
+    let Some(app) = get_element("app-root") else {
+        return;
+    };
+    if app.get_attribute("view").as_deref() == Some("picker")
+        || app.get_attribute("view").as_deref() == Some("detail")
+    {
+        return;
+    }
+
+    if projects.is_empty() {
+        try_inner_text(
+            "#project-list",
+            "No projects yet. Add a folder to get started.",
+        );
+        return;
+    }
+
+    let mut cards = String::new();
+    for project in projects {
+        let card = html! {{
+            <button class="request-card" type="button" data-project-path="$(project.path)" data-project-name="$(project.name)" onclick="openProject(this.dataset.projectPath, this.dataset.projectName)">
+                <span class="request-card-name">$(project.name)</span>
+                <span class="request-card-details">$(project.path)</span>
+            </button>
+        }};
+        cards.push_str(card.as_str());
+    }
+
+    if let Some(list) = get_element("#project-list") {
+        list.set_inner_html(&cards);
+    }
+}
+
 #[callback(loadRequests)]
 fn load_requests() {
-    spawn_local(async {
-        match tauri_wasm::invoke("load_request_list").await {
+    let project_path = selected_project_path();
+    if project_path.is_empty() {
+        show_project_picker();
+        return;
+    }
+
+    spawn_local(async move {
+        let project_args = LoadRequestListArgs { project_path };
+        let args = match tauri_wasm::args(&project_args) {
+            Ok(args) => args,
+            Err(error) => {
+                try_inner_text(
+                    "#request-list",
+                    &format!("Could not load saved requests: {error}"),
+                );
+                return;
+            }
+        };
+
+        match tauri_wasm::invoke("load_request_list")
+            .with_args(args)
+            .await
+        {
             Ok(value) => match serde_wasm_bindgen::from_value::<Vec<RequestSummary>>(value) {
                 Ok(requests) => render_request_list(&requests),
                 Err(error) => try_inner_text(
@@ -499,7 +644,7 @@ fn render_request_list(requests: &[RequestSummary]) {
         return;
     };
 
-    if app.get_attribute("view").as_deref() == Some("detail") {
+    if app.get_attribute("view").as_deref() != Some("picker") {
         return;
     }
 
@@ -525,8 +670,134 @@ fn render_request_list(requests: &[RequestSummary]) {
     }
 }
 
+fn show_project_folder_dialog(start_new_request: bool) {
+    let Some(dialog) = get_element("#project-folder-dialog") else {
+        return;
+    };
+
+    let _ = dialog.set_attribute(
+        "data-start-new-request",
+        if start_new_request { "true" } else { "false" },
+    );
+    let _ = dialog.remove_attribute("hidden");
+    clear_project_folder_error();
+}
+
+fn clear_project_folder_error() {
+    try_inner_text("#project-folder-error", "");
+    if let Some(error) = get_element("#project-folder-error") {
+        let _ = error.set_attribute("hidden", "");
+    }
+}
+
+fn hide_project_folder_dialog() {
+    if let Some(dialog) = get_element("#project-folder-dialog") {
+        let _ = dialog.set_attribute("hidden", "");
+    }
+}
+
+fn set_project_folder_error(message: &str) {
+    try_inner_text("#project-folder-error", message);
+    if let Some(error) = get_element("#project-folder-error") {
+        let _ = error.remove_attribute("hidden");
+    }
+}
+
+fn set_project_folder_path(path: &str) {
+    if let Some(input) = get_element("#project-folder-input")
+        .and_then(|element| element.dyn_into::<web_sys::HtmlInputElement>().ok())
+    {
+        input.set_value(path);
+    }
+}
+
+fn select_project(project: &ProjectSummary) {
+    if let Some(app) = get_element("app-root") {
+        let _ = app.set_attribute("project_path", &project.path);
+        let _ = app.set_attribute("project_name", &project.name);
+    }
+}
+
+#[callback(showProjectFolderDialog)]
+fn show_project_folder_dialog_action() {
+    show_project_folder_dialog(false);
+}
+
+#[callback(hideProjectFolderDialog)]
+fn hide_project_folder_dialog_action() {
+    hide_project_folder_dialog();
+}
+
+#[callback(browseProjectFolder)]
+fn browse_project_folder() {
+    spawn_local(async {
+        match tauri_wasm::invoke("pick_project_folder").await {
+            Ok(value) => match serde_wasm_bindgen::from_value::<Option<String>>(value) {
+                Ok(Some(path)) => {
+                    set_project_folder_path(&path);
+                    clear_project_folder_error();
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    set_project_folder_error(&format!("Could not read selected folder: {error}"))
+                }
+            },
+            Err(error) => set_project_folder_error(&format!("Could not choose a folder: {error}")),
+        }
+    });
+}
+
+#[callback(addProject)]
+fn add_project() {
+    let path = try_get_value("#project-folder-input").trim().to_owned();
+    if path.is_empty() {
+        set_project_folder_error("Enter a folder path.");
+        return;
+    }
+
+    let Some(dialog) = get_element("#project-folder-dialog") else {
+        return;
+    };
+
+    let start_new_request =
+        dialog.get_attribute("data-start-new-request").as_deref() == Some("true");
+
+    let project_args = AddProjectArgs { path };
+
+    spawn_local(async move {
+        let args = match tauri_wasm::args(&project_args) {
+            Ok(args) => args,
+            Err(error) => {
+                set_project_folder_error(&format!("Could not prepare project folder: {error}"));
+                return;
+            }
+        };
+
+        match tauri_wasm::invoke("add_project").with_args(args).await {
+            Ok(value) => match serde_wasm_bindgen::from_value::<ProjectSummary>(value) {
+                Ok(project) => {
+                    select_project(&project);
+                    hide_project_folder_dialog();
+                    if start_new_request {
+                        new_request();
+                    } else {
+                        load_projects();
+                    }
+                }
+                Err(error) => set_project_folder_error(&format!("Could not read project: {error}")),
+            },
+            Err(error) => set_project_folder_error(&format!("{error}")),
+        }
+    });
+}
+
 #[callback(newRequest)]
 fn new_request() {
+    if selected_project_path().is_empty() {
+        show_project_folder_dialog(true);
+        return;
+    }
+
     set_request_attributes(&StoredRequest {
         id: String::new(),
         name: String::new(),
@@ -601,10 +872,35 @@ fn discard_and_show_request_picker() {
     show_request_picker();
 }
 
+#[callback(showProjectPicker)]
+fn show_project_picker_action() {
+    if !request_is_dirty() {
+        show_project_picker();
+        return;
+    }
+
+    set_unsaved_changes_dialog_visible(true);
+}
+
+#[callback(openProject)]
+fn open_project(path: String, name: String) {
+    if let Some(app) = get_element("app-root") {
+        let _ = app.set_attribute("project_path", &path);
+        let _ = app.set_attribute("project_name", &name);
+        let _ = app.set_attribute("view", "picker");
+    }
+}
+
 #[callback(openRequest)]
 fn open_request(id: String) {
+    let project_path = selected_project_path();
+    if project_path.is_empty() {
+        show_project_picker();
+        return;
+    }
+
     spawn_local(async move {
-        let request_args = LoadRequestArgs { id };
+        let request_args = LoadRequestArgs { project_path, id };
         let args = match tauri_wasm::args(&request_args) {
             Ok(args) => args,
             Err(error) => {
@@ -792,6 +1088,12 @@ fn save_request_shortcut(event: web_sys::KeyboardEvent) {
 }
 
 fn save_request(return_to_picker: bool) {
+    let project_path = selected_project_path();
+    if project_path.is_empty() {
+        show_project_folder_dialog(true);
+        return;
+    }
+
     if try_get_value("#request-name-input").trim().is_empty() {
         set_request_error("Enter a request name before saving.");
         return;
@@ -806,9 +1108,13 @@ fn save_request(return_to_picker: bool) {
     };
 
     set_request_status("Saving request");
+    let request_args = SaveRequestArgs {
+        project_path,
+        request,
+    };
 
     spawn_local(async move {
-        let args = match tauri_wasm::args(&request) {
+        let args = match tauri_wasm::args(&request_args) {
             Ok(args) => args,
             Err(error) => {
                 set_request_error(&format!("Could not prepare request: {error}"));
