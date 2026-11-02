@@ -389,7 +389,11 @@ async fn send_request(
 
     let response_method = method.to_string();
     let method_allows_body = !matches!(method, Method::GET | Method::HEAD);
-    let request = Client::new().request(method, url).headers(headers);
+    let client = Client::builder()
+        .user_agent("resting-chair")
+        .build()
+        .map_err(|error| format!("Could not create HTTP client: {error}"))?;
+    let request = client.request(method, url).headers(headers);
     let request = if method_allows_body {
         request.body(body)
     } else {

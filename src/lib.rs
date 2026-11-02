@@ -1,5 +1,3 @@
-use std::cell::Cell;
-
 use kaja_web::prelude::*;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::{JsCast, prelude::wasm_bindgen};
@@ -11,10 +9,6 @@ use tauri::{
     AddProjectArgs, CheckHeadersGitignoreArgs, LoadRequestArgs, LoadRequestListArgs,
     SaveRequestArgs,
 };
-
-thread_local! {
-    static HEADER_ROW_COUNT: Cell<usize> = const { Cell::new(1) };
-}
 
 #[derive(Clone, Deserialize, Serialize)]
 struct RequestHeader {
@@ -250,19 +244,6 @@ impl Component for RestCallSetupComponent {
 impl RestCallSetupComponent {
     fn render(&self) {
         let headers = self.headers();
-        let row_count = headers.len();
-        HEADER_ROW_COUNT.with(|count| count.set(row_count));
-
-        let mut header_rows = String::new();
-        for index in 0..row_count {
-            let header = headers.get(index);
-            let key = header.map(|header| header.key.as_str()).unwrap_or_default();
-            let value = header
-                .map(|header| header.value.as_str())
-                .unwrap_or_default();
-            let enabled = header.map(|header| header.enabled).unwrap_or(true);
-            header_rows.push_str(&header_row(index, key, value, enabled));
-        }
 
         let request_id = self.attribute("request_id");
         let request_name = self.attribute("request_name");
@@ -344,10 +325,7 @@ impl RestCallSetupComponent {
         if let Some(method_input) = get_element("#method-input") {
             method_input.set_inner_html(&method_options);
         }
-        if let Some(header_list) = get_element("#header-list") {
-            header_list.set_inner_html(&header_rows);
-        }
-        update_header_list_visibility();
+        let _ = render_header_rows(&headers);
         update_request_url();
         update_request_body_visibility();
     }
@@ -403,6 +381,43 @@ fn update_header_list_visibility() {
     } else {
         let _ = header_list.set_attribute("hidden", "");
     }
+}
+
+fn render_header_rows(headers: &[RequestHeader]) -> bool {
+    let Some(header_list) = get_element("#header-list") else {
+        return false;
+    };
+
+    let mut rows = String::new();
+    for (index, header) in headers.iter().enumerate() {
+        rows.push_str(&header_row(
+            index,
+            &header.key,
+            &header.value,
+            header.enabled,
+        ));
+    }
+
+    header_list.set_inner_html(&rows);
+    update_header_list_visibility();
+    true
+}
+
+fn header_row_count() -> usize {
+    get_element("#header-list")
+        .and_then(|header_list| header_list.query_selector_all(".header-row").ok())
+        .map(|rows| rows.length() as usize)
+        .unwrap_or_default()
+}
+
+fn headers_from_form() -> Vec<RequestHeader> {
+    (0..header_row_count())
+        .map(|index| RequestHeader {
+            key: try_get_value(&format!("#header-key-input-{index}")),
+            value: try_get_value(&format!("#header-value-input-{index}")),
+            enabled: try_get_checkbox_checked(&format!("#header-enabled-input-{index}")),
+        })
+        .collect()
 }
 
 fn header_row(index: usize, key: &str, value: &str, enabled: bool) -> String {
@@ -1033,36 +1048,29 @@ fn open_request(id: String) {
 
 #[callback(addHeader)]
 fn add_header() {
-    let added = HEADER_ROW_COUNT.with(|count| {
-        let index = count.get();
-        let Some(header_list) = get_element("#header-list") else {
-            return false;
-        };
-
-        if header_list
-            .insert_adjacent_html("beforeend", &header_row(index, "", "", true))
-            .is_ok()
-        {
-            count.set(index + 1);
-            update_header_list_visibility();
-            set_request_dirty(true);
-            true
-        } else {
-            false
-        }
+    let mut headers = headers_from_form();
+    headers.push(RequestHeader {
+        key: String::new(),
+        value: String::new(),
+        enabled: true,
     });
 
-    if !added {
+    if render_header_rows(&headers) {
+        set_request_dirty(true);
+    } else {
         set_request_error("Could not add a header field.");
     }
 }
 
 #[callback(removeHeader)]
 fn remove_header(index: usize) {
-    let selector = format!("#header-row-{index}");
-    if let Some(row) = get_element(&selector) {
-        row.remove();
-        update_header_list_visibility();
+    let mut headers = headers_from_form();
+    if index >= headers.len() {
+        return;
+    }
+
+    headers.remove(index);
+    if render_header_rows(&headers) {
         set_request_dirty(true);
     }
 }
@@ -1089,31 +1097,20 @@ fn try_get_checkbox_checked(selector: &str) -> bool {
 }
 
 fn collect_headers() -> std::result::Result<Vec<RequestHeader>, String> {
-    HEADER_ROW_COUNT.with(|count| {
-        let mut headers = Vec::new();
-        for index in 0..count.get() {
-            let key = try_get_value(&format!("#header-key-input-{index}"))
-                .trim()
-                .to_owned();
-            let value = try_get_value(&format!("#header-value-input-{index}"))
-                .trim()
-                .to_owned();
-            let enabled = try_get_checkbox_checked(&format!("#header-enabled-input-{index}"));
+    let mut headers = Vec::new();
+    for (index, mut header) in headers_from_form().into_iter().enumerate() {
+        header.key = header.key.trim().to_owned();
+        header.value = header.value.trim().to_owned();
 
-            if key.is_empty() && value.is_empty() {
-                continue;
-            }
-            if enabled && (key.is_empty() || value.is_empty()) {
-                return Err(format!("Header {} needs both a key and value.", index + 1));
-            }
-            headers.push(RequestHeader {
-                key,
-                value,
-                enabled,
-            });
+        if header.key.is_empty() && header.value.is_empty() {
+            continue;
         }
-        Ok(headers)
-    })
+        if header.enabled && (header.key.is_empty() || header.value.is_empty()) {
+            return Err(format!("Header {} needs both a key and value.", index + 1));
+        }
+        headers.push(header);
+    }
+    Ok(headers)
 }
 
 fn request_from_form() -> std::result::Result<StoredRequest, String> {
