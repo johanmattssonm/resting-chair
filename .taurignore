@@ -1,0 +1,4 @@
+# Runtime project data can live inside this workspace during development.
+# Do not restart the Tauri dev process when requests are saved.
+requests.json
+headers.json
