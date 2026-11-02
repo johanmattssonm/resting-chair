@@ -49,7 +49,7 @@ struct ProjectSummary {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PostResponse {
+struct HttpResponse {
     method: String,
     status: u16,
     status_text: String,
@@ -69,20 +69,6 @@ struct App {
     #[attribute]
     view: String,
     #[attribute]
-    request_id: String,
-    #[attribute]
-    request_name: String,
-    #[attribute]
-    request_method: String,
-    #[attribute]
-    request_domain: String,
-    #[attribute]
-    request_endpoint: String,
-    #[attribute]
-    request_body: String,
-    #[attribute]
-    request_headers: String,
-    #[attribute]
     project_path: String,
     #[attribute]
     project_name: String,
@@ -91,19 +77,7 @@ struct App {
 #[component("rest-call-setup")]
 struct RestCallSetup {
     #[attribute]
-    request_id: String,
-    #[attribute]
-    request_name: String,
-    #[attribute]
-    request_method: String,
-    #[attribute]
-    request_domain: String,
-    #[attribute]
-    request_endpoint: String,
-    #[attribute]
-    request_body: String,
-    #[attribute]
-    request_headers: String,
+    request_data: String,
     #[attribute]
     dirty: bool,
 }
@@ -210,23 +184,8 @@ impl AppComponent {
     }
 
     fn render_request_detail(&self) {
-        let request_id = self.attribute("request_id");
-        let request_name = self.attribute("request_name");
-        let request_method = self.attribute("request_method");
-        let request_domain = self.attribute("request_domain");
-        let request_endpoint = self.attribute("request_endpoint");
-        let request_body = self.attribute("request_body");
-        let request_headers = self.attribute("request_headers");
         let content = html! {{
-            <rest-call-setup
-                request_id="$request_id"
-                request_name="$request_name"
-                request_method="$request_method"
-                request_domain="$request_domain"
-                request_endpoint="$request_endpoint"
-                request_body="$request_body"
-                request_headers="$request_headers">
-            </rest-call-setup>
+            <rest-call-setup></rest-call-setup>
         }};
         self.set_content(content.as_str());
     }
@@ -246,24 +205,27 @@ impl Component for RestCallSetupComponent {
     fn connected(&self) {
         self.render();
     }
+
+    fn attribute_changed(&self, name: &str, _old_value: &str, _new_value: &str) {
+        if name == "request_data" {
+            self.render();
+        }
+    }
 }
 
 impl RestCallSetupComponent {
     fn render(&self) {
-        let headers = self.headers();
-
-        let request_id = self.attribute("request_id");
-        let request_name = self.attribute("request_name");
-        let request_name_headline = if request_name.trim().is_empty() {
+        let request = self.request();
+        let request_name_headline = if request.name.trim().is_empty() {
             "None"
         } else {
-            &request_name
+            &request.name
         };
-        let method = self.attribute("request_method");
-        let domain = self.attribute("request_domain");
-        let endpoint = self.attribute("request_endpoint");
-        let body = self.attribute("request_body");
-        let method = if method.is_empty() { "GET" } else { &method };
+        let method = if request.method.is_empty() {
+            "GET"
+        } else {
+            &request.method
+        };
         let method_options = method_options(method);
 
         let content = html! {{
@@ -276,10 +238,10 @@ impl RestCallSetupComponent {
                 </header>
 
                 <section class="request-form" aria-label="Request details">
-                    <input id="request-id-input" type="hidden" value="$request_id" />
+                    <input id="request-id-input" type="hidden" value="$(request.id)" />
                     <div class="field">
                         <label for="request-name-input">Name</label>
-                        <input id="request-name-input" type="text" value="$request_name" oninput="updateRequest()" />
+                        <input id="request-name-input" type="text" value="$(request.name)" oninput="updateRequest()" />
                     </div>
                     <div class="field">
                         <label for="method-input">Method</label>
@@ -287,15 +249,15 @@ impl RestCallSetupComponent {
                     </div>
                     <div class="field">
                         <label for="domain-input">Domain</label>
-                        <input id="domain-input" type="url" value="$domain" placeholder="https://api.example.com" oninput="updateRequest()" />
+                        <input id="domain-input" type="url" value="$(request.domain)" placeholder="https://api.example.com" oninput="updateRequest()" />
                     </div>
                     <div class="field">
                         <label for="endpoint-input">Endpoint</label>
-                        <input id="endpoint-input" type="text" value="$endpoint" placeholder="/v1/resources" oninput="updateRequest()" />
+                        <input id="endpoint-input" type="text" value="$(request.endpoint)" placeholder="/v1/resources" oninput="updateRequest()" />
                     </div>
                     <div id="body-field" class="field">
                         <label for="body-input">Request body</label>
-                        <textarea id="body-input" spellcheck="false" placeholder="{&quot;name&quot;:&quot;Example&quot;}" oninput="updateRequest()" onkeydown="handleBodyTab(event)">$body</textarea>
+                        <textarea id="body-input" spellcheck="false" placeholder="{&quot;name&quot;:&quot;Example&quot;}" oninput="updateRequest()" onkeydown="handleBodyTab(event)">$(request.body)</textarea>
                     </div>
                     <div class="field">
                         <span class="field-label">Headers</span>
@@ -334,13 +296,13 @@ impl RestCallSetupComponent {
         if let Some(method_input) = get_element("#method-input") {
             method_input.set_inner_html(&method_options);
         }
-        let _ = render_header_rows(&headers);
+        let _ = render_header_rows(&request.headers);
         update_request_url();
         update_request_body_visibility();
     }
 
-    fn headers(&self) -> Vec<RequestHeader> {
-        serde_json::from_str(&self.attribute("request_headers")).unwrap_or_default()
+    fn request(&self) -> StoredRequest {
+        serde_json::from_str(&self.attribute("request_data")).unwrap_or_else(|_| empty_request())
     }
 
     fn attribute(&self, name: &str) -> String {
@@ -564,25 +526,35 @@ fn set_unsaved_changes_dialog_visible(visible: bool) {
     }
 }
 
-fn set_request_attributes(request: &StoredRequest) {
-    let Some(app) = get_element("app-root") else {
-        return;
-    };
-    let headers = match serde_json::to_string(&request.headers) {
-        Ok(headers) => headers,
-        Err(_) => {
-            set_request_error("Could not prepare request headers.");
+fn empty_request() -> StoredRequest {
+    StoredRequest {
+        id: String::new(),
+        name: String::new(),
+        method: "GET".to_owned(),
+        domain: String::new(),
+        endpoint: String::new(),
+        body: String::new(),
+        headers: Vec::new(),
+    }
+}
+
+fn show_request_detail(request: &StoredRequest) {
+    let request_data = match serde_json::to_string(request) {
+        Ok(request_data) => request_data,
+        Err(error) => {
+            web_sys::console::error_1(
+                &format!("Could not prepare request details: {error}").into(),
+            );
             return;
         }
     };
 
-    let _ = app.set_attribute("request_id", &request.id);
-    let _ = app.set_attribute("request_name", &request.name);
-    let _ = app.set_attribute("request_method", &request.method);
-    let _ = app.set_attribute("request_domain", &request.domain);
-    let _ = app.set_attribute("request_endpoint", &request.endpoint);
-    let _ = app.set_attribute("request_body", &request.body);
-    let _ = app.set_attribute("request_headers", &headers);
+    if let Some(app) = get_element("app-root") {
+        let _ = app.set_attribute("view", "detail");
+    }
+    if let Some(setup) = get_element("rest-call-setup") {
+        let _ = setup.set_attribute("request_data", &request_data);
+    }
 }
 
 #[callback(loadProjects)]
@@ -819,28 +791,31 @@ fn invoke_add_project(path: String, start_new_request: bool) {
             }
         };
 
-        match tauri_wasm::invoke("add_project").with_args(args).await {
-            Ok(value) => match serde_wasm_bindgen::from_value::<ProjectSummary>(value) {
-                Ok(project) => {
-                    select_project(&project);
-                    hide_project_folder_dialog();
-                    hide_gitignore_warning();
-                    if start_new_request {
-                        new_request();
-                    } else {
-                        load_projects();
-                    }
-                }
-                Err(error) => {
-                    show_project_folder_dialog(start_new_request);
-                    set_project_folder_path(&path);
-                    set_project_folder_error(&format!("Could not read project: {error}"));
-                }
-            },
+        let value = match tauri_wasm::invoke("add_project").with_args(args).await {
+            Ok(value) => value,
             Err(error) => {
                 show_project_folder_dialog(start_new_request);
                 set_project_folder_path(&path);
                 set_project_folder_error(&error.to_string());
+                return;
+            }
+        };
+
+        match serde_wasm_bindgen::from_value::<ProjectSummary>(value) {
+            Ok(project) => {
+                select_project(&project);
+                hide_project_folder_dialog();
+                hide_gitignore_warning();
+                if start_new_request {
+                    new_request();
+                } else {
+                    load_projects();
+                }
+            }
+            Err(error) => {
+                show_project_folder_dialog(start_new_request);
+                set_project_folder_path(&path);
+                set_project_folder_error(&format!("Could not read project response: {error}"));
             }
         }
     });
@@ -870,23 +845,26 @@ fn add_project() {
             }
         };
 
-        match tauri_wasm::invoke("check_headers_gitignore")
+        let value = match tauri_wasm::invoke("check_headers_gitignore")
             .with_args(args)
             .await
         {
-            Ok(value) => match serde_wasm_bindgen::from_value::<bool>(value) {
-                Ok(true) => invoke_add_project(path, start_new_request),
-                Ok(false) => {
-                    hide_project_folder_dialog();
-                    show_gitignore_warning(&path, start_new_request);
-                }
-                Err(error) => {
-                    set_project_folder_error(&format!("Could not read .gitignore files: {error}"))
-                }
-            },
+            Ok(value) => value,
             Err(error) => {
-                set_project_folder_error(&format!("Could not read .gitignore files: {error}"))
+                set_project_folder_error(&error.to_string());
+                return;
             }
+        };
+
+        match serde_wasm_bindgen::from_value::<bool>(value) {
+            Ok(true) => invoke_add_project(path, start_new_request),
+            Ok(false) => {
+                hide_project_folder_dialog();
+                show_gitignore_warning(&path, start_new_request);
+            }
+            Err(error) => set_project_folder_error(&format!(
+                "Could not read .gitignore check result: {error}"
+            )),
         }
     });
 }
@@ -924,18 +902,7 @@ fn new_request() {
         return;
     }
 
-    set_request_attributes(&StoredRequest {
-        id: String::new(),
-        name: String::new(),
-        method: "GET".to_owned(),
-        domain: String::new(),
-        endpoint: String::new(),
-        body: String::new(),
-        headers: Vec::new(),
-    });
-    if let Some(app) = get_element("app-root") {
-        let _ = app.set_attribute("view", "detail");
-    }
+    show_request_detail(&empty_request());
 }
 
 #[callback(updateRequest)]
@@ -1037,12 +1004,7 @@ fn open_request(id: String) {
 
         match tauri_wasm::invoke("load_request").with_args(args).await {
             Ok(value) => match serde_wasm_bindgen::from_value::<StoredRequest>(value) {
-                Ok(request) => {
-                    set_request_attributes(&request);
-                    if let Some(app) = get_element("app-root") {
-                        let _ = app.set_attribute("view", "detail");
-                    }
-                }
+                Ok(request) => show_request_detail(&request),
                 Err(error) => try_inner_text(
                     "#request-list",
                     &format!("Could not read request details: {error}"),
@@ -1196,7 +1158,7 @@ fn format_response_body(body: &str) -> String {
         .unwrap_or_else(|_| body.to_owned())
 }
 
-fn render_request_response(response: PostResponse) {
+fn render_request_response(response: HttpResponse) {
     try_inner_text(
         "#request-url",
         &format!("{} {}", response.method, response.url),
@@ -1275,7 +1237,6 @@ fn save_request(return_to_picker: bool) {
         match tauri_wasm::invoke("save_request").with_args(args).await {
             Ok(value) => match serde_wasm_bindgen::from_value::<StoredRequest>(value) {
                 Ok(saved_request) => {
-                    set_request_attributes(&saved_request);
                     if let Some(id) = get_element("#request-id-input") {
                         let _ = id.set_attribute("value", &saved_request.id);
                     }
@@ -1320,7 +1281,7 @@ fn post_request() {
         };
 
         match tauri_wasm::invoke("send_request").with_args(args).await {
-            Ok(value) => match serde_wasm_bindgen::from_value::<PostResponse>(value) {
+            Ok(value) => match serde_wasm_bindgen::from_value::<HttpResponse>(value) {
                 Ok(response) => {
                     set_request_status_with_code(response.status, &response.status_text);
                     render_request_response(response);
