@@ -260,7 +260,7 @@ impl RestCallSetupComponent {
                     </div>
                     <div class="form-actions">
                         <button type="button" onclick="saveRequest()">Save request</button>
-                        <button class="button-secondary" type="button" onclick="postRequest()">Send request</button>
+                        <button class="button-secondary" type="button" onclick="postRequest()" title="Send request (Ctrl+Enter)" aria-keyshortcuts="Control+Enter">Send request</button>
                     </div>
                 </section>
                 <p id="request-status" class="request-status" role="status" aria-live="polite"></p>
@@ -1196,6 +1196,19 @@ fn save_request_action() {
     save_request(false);
 }
 
+#[callback(sendRequestShortcut)]
+fn send_request_shortcut(event: web_sys::KeyboardEvent) {
+    if !(event.ctrl_key() || event.meta_key())
+        || event.key() != "Enter"
+        || get_element("#request-name-input").is_none()
+    {
+        return;
+    }
+
+    event.prevent_default();
+    post_request();
+}
+
 #[callback(saveRequestShortcut)]
 fn save_request_shortcut(event: web_sys::KeyboardEvent) {
     if !(event.ctrl_key() || event.meta_key())
@@ -1310,8 +1323,10 @@ pub fn init() {
     let Some(window) = web_sys::window() else {
         return;
     };
-    let Some(callback) = get_callback("saveRequestShortcut") else {
-        return;
-    };
-    let _ = window.add_event_listener_with_callback("keydown", &callback);
+    for callback_name in ["saveRequestShortcut", "sendRequestShortcut"] {
+        let Some(callback) = get_callback(callback_name) else {
+            continue;
+        };
+        let _ = window.add_event_listener_with_callback("keydown", &callback);
+    }
 }
