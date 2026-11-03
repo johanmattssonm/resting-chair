@@ -432,7 +432,7 @@ fn set_request_error(message: &str) {
 
 fn set_request_status_with_code(status_code: u16, message: &str) {
     if let Some(status) = get_element("#request-status") {
-        let class = if status_code == 200 {
+        let class = if (200..300).contains(&status_code) {
             "request-status request-status-success"
         } else {
             "request-status request-status-failed"
