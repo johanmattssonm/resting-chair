@@ -543,9 +543,7 @@ fn show_request_detail(request: &StoredRequest) {
     let request_data = match serde_json::to_string(request) {
         Ok(request_data) => request_data,
         Err(error) => {
-            web_sys::console::error_1(
-                &format!("Could not prepare request details: {error}").into(),
-            );
+            gloo::console::error!(format!("Could not prepare request details: {error}"));
             return;
         }
     };
@@ -568,13 +566,13 @@ fn load_startup_project() {
                     show_request_picker();
                 }
                 Ok(None) => {}
-                Err(error) => web_sys::console::error_1(
-                    &format!("Could not read the startup project: {error}").into(),
-                ),
+                Err(error) => {
+                    log!(format!("Could not read the startup project: {error}"));
+                }
             },
-            Err(error) => web_sys::console::error_1(
-                &format!("Could not load the startup project: {error}").into(),
-            ),
+            Err(error) => {
+                log!(format!("Could not load the startup project: {error}"));
+            }
         }
     });
 }
