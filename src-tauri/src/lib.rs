@@ -260,6 +260,37 @@ fn check_headers_gitignore(path: String) -> Result<bool, String> {
     headers_file_is_ignored(&path)
 }
 
+fn register_project(app: &AppHandle, canonical_path: PathBuf) -> Result<ProjectSummary, String> {
+    let project = Project {
+        path: canonical_path.to_string_lossy().into_owned(),
+    };
+    let mut projects = load_projects(app)?;
+    if !projects.iter().any(|saved| saved.path == project.path) {
+        projects.push(project.clone());
+        write_projects(app, &projects)?;
+    }
+
+    Ok(project_summary(&project))
+}
+
+#[tauri::command]
+fn load_startup_project(app: AppHandle) -> Result<Option<ProjectSummary>, String> {
+    let current_directory = std::env::current_dir()
+        .map_err(|error| format!("Could not determine the current folder: {error}"))?;
+
+    if !current_directory.join(REQUESTS_FILE_NAME).is_file() {
+        return Ok(None);
+    }
+
+    let canonical_path = fs::canonicalize(&current_directory)
+        .map_err(|error| format!("Could not access the current folder: {error}"))?;
+    if !canonical_path.is_dir() {
+        return Ok(None);
+    }
+
+    register_project(&app, canonical_path).map(Some)
+}
+
 #[tauri::command]
 fn add_project(app: AppHandle, path: String) -> Result<ProjectSummary, String> {
     let canonical_path = fs::canonicalize(path.trim())
@@ -268,16 +299,7 @@ fn add_project(app: AppHandle, path: String) -> Result<ProjectSummary, String> {
         return Err("Choose an existing folder for the project.".to_owned());
     }
 
-    let project = Project {
-        path: canonical_path.to_string_lossy().into_owned(),
-    };
-    let mut projects = load_projects(&app)?;
-    if !projects.iter().any(|saved| saved.path == project.path) {
-        projects.push(project.clone());
-        write_projects(&app, &projects)?;
-    }
-
-    Ok(project_summary(&project))
+    register_project(&app, canonical_path)
 }
 
 #[tauri::command]
@@ -479,6 +501,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             load_project_list,
+            load_startup_project,
             pick_project_folder,
             check_headers_gitignore,
             add_project,

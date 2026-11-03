@@ -85,6 +85,7 @@ struct RestCallSetup {
 impl Component for AppComponent {
     fn connected(&self) {
         self.render();
+        load_startup_project();
     }
 
     fn attribute_changed(&self, name: &str, _old_value: &str, _new_value: &str) {
@@ -555,6 +556,27 @@ fn show_request_detail(request: &StoredRequest) {
     if let Some(setup) = get_element("rest-call-setup") {
         let _ = setup.set_attribute("request_data", &request_data);
     }
+}
+
+#[callback(loadStartupProject)]
+fn load_startup_project() {
+    spawn_local(async {
+        match tauri_wasm::invoke("load_startup_project").await {
+            Ok(value) => match serde_wasm_bindgen::from_value::<Option<ProjectSummary>>(value) {
+                Ok(Some(project)) => {
+                    select_project(&project);
+                    show_request_picker();
+                }
+                Ok(None) => {}
+                Err(error) => web_sys::console::error_1(
+                    &format!("Could not read the startup project: {error}").into(),
+                ),
+            },
+            Err(error) => web_sys::console::error_1(
+                &format!("Could not load the startup project: {error}").into(),
+            ),
+        }
+    });
 }
 
 #[callback(loadProjects)]

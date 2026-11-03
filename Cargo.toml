@@ -1,6 +1,8 @@
 [package]
-name = "tauri-kaja-frontend"
+name = "resting-chair"
 version = "0.1.0"
+description = "REST calls"
+license = "MIT"
 edition = "2024"
 
 [lib]
