@@ -543,7 +543,7 @@ fn show_request_detail(request: &StoredRequest) {
     let request_data = match serde_json::to_string(request) {
         Ok(request_data) => request_data,
         Err(error) => {
-            gloo::console::error!(format!("Could not prepare request details: {error}"));
+            log!(format!("Could not prepare request details: {error}"));
             return;
         }
     };
@@ -559,20 +559,25 @@ fn show_request_detail(request: &StoredRequest) {
 #[callback(loadStartupProject)]
 fn load_startup_project() {
     spawn_local(async {
-        match tauri_wasm::invoke("load_startup_project").await {
-            Ok(value) => match serde_wasm_bindgen::from_value::<Option<ProjectSummary>>(value) {
-                Ok(Some(project)) => {
-                    select_project(&project);
-                    show_request_picker();
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    log!(format!("Could not read the startup project: {error}"));
-                }
-            },
+        let value = match tauri_wasm::invoke("load_startup_project").await {
+            Ok(value) => value,
             Err(error) => {
                 log!(format!("Could not load the startup project: {error}"));
+                return;
             }
+        };
+
+        let project = match serde_wasm_bindgen::from_value::<Option<ProjectSummary>>(value) {
+            Ok(project) => project,
+            Err(error) => {
+                log!(format!("Could not read the startup project: {error}"));
+                return;
+            }
+        };
+
+        if let Some(project) = project {
+            select_project(&project);
+            show_request_picker();
         }
     });
 }
