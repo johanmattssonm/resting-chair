@@ -1,0 +1,15 @@
+{
+  "bundle": {
+    "targets": ["deb"],
+    "linux": {
+      "deb": {
+        "section": "devel",
+        "priority": "optional",
+        "files": {
+          "/usr/share/metainfo/com.kajacode.resting-chair.metainfo.xml": "resources/com.kajacode.resting-chair.metainfo.xml",
+          "/usr/share/doc/resting-chair/copyright": "resources/debian-copyright"
+        }
+      }
+    }
+  }
+}

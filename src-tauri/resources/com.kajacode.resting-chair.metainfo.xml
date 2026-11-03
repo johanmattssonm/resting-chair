@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.kajacode.resting-chair</id>
+  <name>Resting Chair</name>
+  <summary>Create and send REST requests</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="com.kajacode">
+    <name>Johan Mattsson</name>
+  </developer>
+  <developer_name>Johan Mattsson</developer_name>
+  <url type="homepage">https://kajacode.com</url>
+
+  <launchable type="desktop-id">resting-chair.desktop</launchable>
+  <provides>
+    <binary>resting-chair</binary>
+  </provides>
+
+  <icon type="stock">resting-chair</icon>
+
+  <categories>
+    <category>Development</category>
+  </categories>
+
+  <description>
+    <p>Resting Chair is a desktop application for creating, saving, sending, and inspecting REST requests.</p>
+  </description>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="1.0.0" date="2026-11-03" />
+  </releases>
+</component>
