@@ -76,8 +76,7 @@ struct App {
 
 #[component("rest-call-setup")]
 struct RestCallSetup {
-    #[attribute]
-    request_data: String,
+    request: Option<StoredRequest>,
     #[attribute]
     dirty: bool,
 }
@@ -186,7 +185,7 @@ impl AppComponent {
 
     fn render_request_detail(&self) {
         let content = html! {{
-            <rest-call-setup></rest-call-setup>
+            <rest-call-setup id="rest-call-setup"></rest-call-setup>
         }};
         self.set_content(content.as_str());
     }
@@ -205,12 +204,6 @@ impl AppComponent {
 impl Component for RestCallSetupComponent {
     fn connected(&self) {
         self.render();
-    }
-
-    fn attribute_changed(&self, name: &str, _old_value: &str, _new_value: &str) {
-        if name == "request_data" {
-            self.render();
-        }
     }
 }
 
@@ -303,11 +296,7 @@ impl RestCallSetupComponent {
     }
 
     fn request(&self) -> StoredRequest {
-        serde_json::from_str(&self.attribute("request_data")).unwrap_or_else(|_| empty_request())
-    }
-
-    fn attribute(&self, name: &str) -> String {
-        self.get_attribute_string(name).unwrap_or_default()
+        self.borrow().request.clone().unwrap_or_else(empty_request)
     }
 
     fn set_content(&self, content: &str) {
@@ -540,20 +529,16 @@ fn empty_request() -> StoredRequest {
 }
 
 fn show_request_detail(request: &StoredRequest) {
-    let request_data = match serde_json::to_string(request) {
-        Ok(request_data) => request_data,
-        Err(error) => {
-            log!(format!("Could not prepare request details: {error}"));
-            return;
-        }
-    };
-
     if let Some(app) = get_element("app-root") {
         let _ = app.set_attribute("view", "detail");
     }
-    if let Some(setup) = get_element("rest-call-setup") {
-        let _ = setup.set_attribute("request_data", &request_data);
-    }
+
+    let Some(setup) = RestCallSetupComponent::get_component("rest-call-setup") else {
+        log!("Could not find the request setup component.");
+        return;
+    };
+    setup.with_mut(|state| state.request = Some(request.clone()));
+    setup.render();
 }
 
 #[callback(loadStartupProject)]
