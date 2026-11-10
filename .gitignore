@@ -1,6 +1,9 @@
 headers.json
 requests.json
 
+src-tauri/vendor/
+node_modules/
+
 # Logs
 logs
 *.log

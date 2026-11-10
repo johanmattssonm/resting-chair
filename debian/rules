@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	npm ci
+	npm run tauri -- build --bundles deb
+
+override_dh_auto_install:
+	mkdir -p debian/resting-chair
+	dpkg-deb -x src-tauri/target/release/bundle/deb/resting-chair_1.0.0_amd64.deb debian/resting-chair

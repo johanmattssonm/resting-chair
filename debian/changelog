@@ -1,0 +1,5 @@
+resting-chair (1.0.0-1) UNRELEASED; urgency=medium
+
+  * Initial release. A GUI app for testing an managing rest calls.
+
+ -- Johan Mattsson <johan.mattsson.m@gmail.com>  Tue, 10 Nov 2026 10:57:12 +0100
